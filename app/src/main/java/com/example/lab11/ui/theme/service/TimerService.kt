@@ -1,80 +1,88 @@
 package com.example.lab11.service
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
+import android.app.*
 import android.content.Intent
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.example.lab11.R
+import kotlinx.coroutines.*
 
-class   TimerService : Service() {
+class TimerService : Service() {
 
-    private var startTime = 0L
-    private val handler = Handler(Looper.getMainLooper())
+    companion object {
+        const val CHANNEL_ID = "timer_channel"
+        const val NOTIFICATION_ID = 1
+        const val ACTION_STOP = "com.example.lab11.STOP_TIMER"
+    }
 
-    private val runnable = object : Runnable {
-        override fun run() {
-            val elapsed = System.currentTimeMillis() - startTime
-            updateNotification(elapsed)
-            handler.postDelayed(this, 1000)
-        }
+    private var timerJob: Job? = null
+    private var seconds = 0
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startTime = System.currentTimeMillis()
-        startForeground(NOTIFICATION_ID, createNotification(0))
-        handler.post(runnable)
+
+        // DETENER SERVICIO
+        if (intent?.action == ACTION_STOP) {
+            stopTimer()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // INICIAR SERVICIO
+        startForeground(NOTIFICATION_ID, buildNotification("Tiempo: 0 s"))
+        startTimer()
+
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        handler.removeCallbacks(runnable)
-        super.onDestroy()
+    private fun startTimer() {
+        if (timerJob != null) return  // evita múltiples timers
+
+        timerJob = CoroutineScope(Dispatchers.Default).launch {
+            while (isActive) {
+                delay(1000)
+                seconds++
+
+                val notification = buildNotification("Tiempo: $seconds s")
+                val manager = getSystemService(NotificationManager::class.java)
+                manager.notify(NOTIFICATION_ID, notification)
+            }
+        }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    private fun stopTimer() {
+        timerJob?.cancel()
+        timerJob = null
+        seconds = 0
+    }
 
-    private fun createNotification(elapsed: Long): Notification {
-        val channelId = "timer_channel"
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Temporizador de receta",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
-        }
-
-        val time = formatTime(elapsed)
-
-        return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("🍲 Receta en preparación")
-            .setContentText("Tiempo transcurrido: $time")
-            .setSmallIcon(R.drawable.ic_timer)
+    private fun buildNotification(text: String): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Temporizador activo")
+            .setContentText(text)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setOnlyAlertOnce(true) // 🔑 evita spam
             .setOngoing(true)
             .build()
     }
 
-    private fun updateNotification(elapsed: Long) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, createNotification(elapsed))
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Temporizador",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
     }
 
-    private fun formatTime(ms: Long): String {
-        val totalSeconds = ms / 1000
-        val minutes = totalSeconds / 60
-        val seconds = totalSeconds % 60
-        return String.format("%02d:%02d", minutes, seconds)
-    }
-
-    companion object {
-        private const val NOTIFICATION_ID = 1
-    }
+    override fun onBind(intent: Intent?): IBinder? = null
 }
